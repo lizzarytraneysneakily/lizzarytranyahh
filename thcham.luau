@@ -27,7 +27,7 @@ getgenv()._VZMapLogged     = nil
 
 print("═══════════════════════════════════════════════")
 print("🛡️ VENOZ NO-SB — BUILD v7.5")
-print("   🔁 RETRY กดครั้งเดียว (รอนิ่ง 3 วิก่อนกด)")
+print("   🔁 RETRY กดจนกว่าจะติด เว้นรอบละ 3 วิ (เช็คก่อนกดทุกครั้ง ไม่ยกเลิกตัวเอง)")
 print("   ⚡ เข้าด่าน = ฟาร์มทันที ไม่รอโหลดอะไรทั้งนั้น")
 print("   ⬛ จอว่างทุกที่ (Main Menu + Lobby + ในด่าน) + ปิดแชทถาวร")
 print("   ⏳ แก้ค้างจอ LOADING ตอนกดออกจากด่าน")
@@ -8755,16 +8755,24 @@ end)
 --  ⚠️ RETRY เป็นปุ่ม TOGGLE (บอทเก่าจดเตือนไว้แล้ว)
 --     กดซ้ำเร็วเกิน = ครั้งที่ 2 ไปยกเลิกครั้งที่ 1 → "กดแล้วไม่ติด"
 --     และ 15 ครั้ง/22 วิ = สัญญาณผิดธรรมชาติ → เสี่ยง shadow-ban
---  ✅ กติกาใหม่: Rewards โผล่ → รอ 3 วิ → กด 1 ครั้ง → จบ ไม่กดซ้ำอีกเลย
---     กันค้าง: ถ้ากดแล้วผ่านไป 25 วิยังค้างหน้าเดิม → กด LEAVE 1 ครั้ง
+--  ✅ กติกา: Rewards โผล่ → รอ 3 วิ → กด → รออีก 3 วิ → ยังไม่ติดค่อยกดใหม่
+--     ทำไมกดซ้ำได้ทั้งที่เป็นปุ่ม toggle:
+--       ก่อนกดรอบถัดไป เช็คก่อนเสมอว่า "รอบที่แล้วไม่ติดจริง"
+--       (ปุ่มยังไม่ขึ้น STARTING / ยังไม่เป็น 1/1 / หน้า Rewards ยังไม่ปิด)
+--       ถ้ารอบที่แล้วติดไปแล้ว จะเจอตั้งแต่ตอนเช็ค แล้วหยุดเลย ไม่มีทางกดยกเลิกตัวเอง
+--     เว้น 3 วิต่อครั้ง = ช้าพอที่จะไม่ใช่สัญญาณผิดธรรมชาติ (ของเก่าที่โดนแบนคือ 15 ครั้ง/22 วิ)
+--     กดครบ 6 ครั้งยังไม่ติด → กด LEAVE แทน
 --     (LEAVE ปลอดภัยกว่า เพราะกลับ lobby แล้ว AutoMission พาเข้าด่านใหม่เอง)
 -- ═══════════════════════════════════════════════════════════════
 if Tabs.AutoFarm then
     task.spawn(function()
-        local SETTLE = 3      -- รอกี่วิหลังหน้า Rewards โผล่ ค่อยกด
-        local GIVEUP = 25     -- กดแล้วยังค้างกี่วิ → ออกจากด่านแทน
+        local _rc = getgenv().VenozChicken or {}
+        local SETTLE    = tonumber(_rc.RetrySettle) or 3   -- รอกี่วิหลังหน้า Rewards โผล่ ค่อยกดครั้งแรก
+        local RETRY_GAP = tonumber(_rc.RetryGap)    or 3   -- เว้นกี่วิระหว่างกดแต่ละครั้ง
+        local MAX_TRIES = tonumber(_rc.RetryTries)  or 6   -- กดได้กี่ครั้ง ครบแล้วกด LEAVE แทน
 
         local shownAt, pressedAt, closedAt = 0, 0, 0
+        local tries = 0
         local pressed, bailed = false, false
         local LastState = nil
 
@@ -8782,6 +8790,7 @@ if Tabs.AutoFarm then
         local function reset()
             LastState = nil
             shownAt, pressedAt, closedAt = 0, 0, 0
+            tries = 0
             pressed, bailed = false, false
         end
 
@@ -8816,6 +8825,7 @@ if Tabs.AutoFarm then
                 if freshRound then
                     shownAt   = tick()
                     pressedAt = 0
+                    tries     = 0
                     pressed   = false
                     bailed    = false
                     print("[RETRY] 👀 เจอหน้าจบด่าน → รอ " .. SETTLE .. " วิให้นิ่งก่อนค่อยกด")
@@ -8827,34 +8837,43 @@ if Tabs.AutoFarm then
 
             if not isOpen then continue end
 
-            -- ✅ ติดแล้ว → เลิกยุ่ง
+            -- ✅ ติดแล้ว → เลิกยุ่ง (เช็คก่อนกดเสมอ = ไม่มีทางกดซ้ำจนยกเลิกตัวเอง)
             local txt = VenozBtnText(retry)
             if txt:find("STARTING") or txt:find("1/1") then
-                if pressed then print("[RETRY] ✅ ติดแล้ว → " .. txt) end
+                if pressed and not getgenv()._VZRetryOK then
+                    getgenv()._VZRetryOK = true
+                    print(string.format("[RETRY] ✅ ติดแล้ว (กดไป %d ครั้ง) → %s", tries, txt))
+                end
                 pressed = true
                 continue
             end
+            getgenv()._VZRetryOK = false
 
-            if not pressed then
-                -- ⏳ ยังไม่ครบ 3 วิ → รอ (ห้ามกดเร็ว ปุ่มมันเป็น toggle)
-                if tick() - shownAt < SETTLE then continue end
+            -- ⏳ ยังไม่ครบ SETTLE วิหลังหน้าโผล่ → รอให้นิ่งก่อน
+            if tick() - shownAt < SETTLE then continue end
 
-                pressed   = true
-                pressedAt = tick()
-                VenozPress(retry)
-                print("[RETRY] 🔁 กด RETRY ครั้งเดียว (" .. txt .. ")")
-            else
-                -- 🚪 กดไปแล้วแต่ยังค้าง → ออกจากด่านแทน (ไม่กด RETRY ซ้ำ)
+            -- ⏱️ เพิ่งกดไป ยังไม่ถึงรอบถัดไป → รอครบ RETRY_GAP ก่อน
+            if pressedAt > 0 and tick() - pressedAt < RETRY_GAP then continue end
+
+            -- 🚪 กดครบโควตาแล้วยังไม่ติด → ออกจากด่านแทน
+            if tries >= MAX_TRIES then
                 if bailed then continue end
-                if pressedAt == 0 or tick() - pressedAt < GIVEUP then continue end
-
                 bailed = true
-                warn("[RETRY] ⛔ กดแล้วไม่ติดใน " .. GIVEUP .. " วิ → ออกจากด่านแทน (กันค้าง)")
+                warn(string.format("[RETRY] ⛔ กด %d ครั้งแล้วยังไม่ติด → ออกจากด่านแทน (กันค้าง)",
+                    tries))
                 local lv = retry.Parent:FindFirstChild("Leave_2")
                     or retry.Parent:FindFirstChild("Leave")
                 if lv then VenozPress(lv) end
                 task.wait(5)
+                continue
             end
+
+            tries     = tries + 1
+            pressed   = true
+            pressedAt = tick()
+            VenozPress(retry)
+            print(string.format("[RETRY] 🔁 กด RETRY ครั้งที่ %d/%d (%s) — ไม่ติดจะกดใหม่ในอีก %d วิ",
+                tries, MAX_TRIES, txt, RETRY_GAP))
         end
     end)
 end
